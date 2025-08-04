@@ -611,7 +611,7 @@ public class HierarchicalCacheService<T> {
             longKeyBucket.deleteAsync();
         }
 
-        // Remove parameter references and clean up empty sets
+        // Remove parameter references
         Set<String> patterns = generateHierarchicalPatterns(cachedItem.getParameters().stream()
                 .sorted(Comparator.comparingInt(SearchParameter::getLevel))
                 .collect(Collectors.toList()));
@@ -619,25 +619,21 @@ public class HierarchicalCacheService<T> {
         for (String pattern : patterns) {
             RSetAsync<Object> paramSet = batch.getSet(PARAM_PREFIX + pattern);
             paramSet.removeAsync(uniqueId);
-
-            // Schedule cleanup of empty parameter sets after batch execution
-            batch.execute(); // Execute current batch first
-
-            // Check if set is empty and delete it
-            RSet<String> paramSetSync = redissonClient.getSet(PARAM_PREFIX + pattern);
-            if (paramSetSync.size() == 0) {
-                paramSetSync.delete();
-            }
-
-            // Create new batch for remaining operations
-            batch = redissonClient.createBatch();
         }
 
-        // Execute final batch if there are remaining operations
-        try {
-            batch.execute();
-        } catch (Exception e) {
-            // Batch might be empty, ignore
+        // Execute the batch once
+        batch.execute();
+
+        // Clean up empty parameter sets (done separately after the main batch)
+        for (String pattern : patterns) {
+            try {
+                RSet<String> paramSetSync = redissonClient.getSet(PARAM_PREFIX + pattern);
+                if (paramSetSync != null && paramSetSync.size() == 0) {
+                    paramSetSync.delete();
+                }
+            } catch (Exception e) {
+                // Ignore cleanup errors - this is best effort
+            }
         }
 
         statistics.decrementValues();
