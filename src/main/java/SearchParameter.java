@@ -7,8 +7,8 @@ public class SearchParameter {
     private final int level;
 
     public SearchParameter(String name, String value, int level) {
-        this.name = name;
-        this.value = value;
+        this.name = Objects.requireNonNull(name, "Name cannot be null");
+        this.value = Objects.requireNonNull(value, "Value cannot be null");
         this.level = level;
     }
 

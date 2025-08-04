@@ -12,7 +12,8 @@ public class CacheStatistics {
     }
 
     public void decrementKeys() {
-        totalKeys.decrementAndGet();
+        if (totalKeys.get() > 0)
+            totalKeys.decrementAndGet();
     }
 
     public void incrementValues() {
@@ -20,7 +21,8 @@ public class CacheStatistics {
     }
 
     public void decrementValues() {
-        totalValues.decrementAndGet();
+        if(totalValues.get() > 0)
+            totalValues.decrementAndGet();
     }
 
     public void incrementHits() {

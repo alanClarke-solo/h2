@@ -523,31 +523,51 @@ public class HierarchicalCacheService<T> {
     // INVALIDATION OPERATIONS
     public void invalidate(String key) {
         if (key == null) return;
-        
-        RBucket<String> primaryBucket = redissonClient.getBucket(PRIMARY_KEY_PREFIX + key);
-        String uniqueId = primaryBucket.get();
-        
-        if (uniqueId != null) {
-            invalidateByUniqueId(uniqueId);
+
+        try {
+            RBucket<String> primaryBucket = redissonClient.getBucket(PRIMARY_KEY_PREFIX + key);
+            String uniqueId = primaryBucket.get();
+
+            if (uniqueId != null) {
+                invalidateByUniqueId(uniqueId);
+            }
+        } catch (Exception e) {
+            System.err.println("Error during invalidation of key '" + key + "': " + e.getMessage());
+            // Don't rethrow - invalidation should be best-effort during cleanup
         }
     }
 
     public void invalidate(Long id) {
         if (id == null) return;
-        
-        RBucket<String> longKeyBucket = redissonClient.getBucket(LONG_KEY_PREFIX + id);
-        String uniqueId = longKeyBucket.get();
-        
-        if (uniqueId != null) {
-            invalidateByUniqueId(uniqueId);
+
+        try {
+            RBucket<String> longKeyBucket = redissonClient.getBucket(LONG_KEY_PREFIX + id);
+            String uniqueId = longKeyBucket.get();
+
+            if (uniqueId != null) {
+                invalidateByUniqueId(uniqueId);
+            }
+        } catch (Exception e) {
+            System.err.println("Error during invalidation of ID '" + id + "': " + e.getMessage());
         }
     }
 
     public void invalidate(String key, Long id) {
         if (key == null || id == null) return;
-        
-        String expectedUniqueId = key + ":" + id;
-        invalidateByUniqueId(expectedUniqueId);
+
+        // First try to find by primary key
+        RBucket<String> primaryBucket = redissonClient.getBucket(PRIMARY_KEY_PREFIX + key);
+        String uniqueId = primaryBucket.get();
+
+        if (uniqueId != null) {
+            // Verify this item also has the correct Long ID
+            RBucket<CachedItem<T>> valueBucket = redissonClient.getBucket(VALUE_PREFIX + uniqueId);
+            CachedItem<T> cachedItem = valueBucket.get();
+
+            if (cachedItem != null && Objects.equals(cachedItem.getLongKey(), id)) {
+                invalidateByUniqueId(uniqueId);
+            }
+        }
     }
 
     public void invalidateByPattern(List<SearchParameter> parameters) {
@@ -570,37 +590,56 @@ public class HierarchicalCacheService<T> {
     private void invalidateByUniqueId(String uniqueId) {
         RBucket<CachedItem<T>> valueBucket = redissonClient.getBucket(VALUE_PREFIX + uniqueId);
         CachedItem<T> cachedItem = valueBucket.get();
-        
+
         if (cachedItem == null) return;
-        
+
         RBatch batch = redissonClient.createBatch();
-        
+
         // Remove value
         RBucketAsync<Object> valueBucketBatch = batch.getBucket(VALUE_PREFIX + uniqueId);
         valueBucketBatch.deleteAsync();
-        
+
         // Remove primary key reference
-        RBucketAsync<Object> primaryBucket = batch.getBucket(PRIMARY_KEY_PREFIX + cachedItem.getStringKey());
-        primaryBucket.deleteAsync();
-        
+        if (cachedItem.getStringKey() != null) {
+            RBucketAsync<Object> primaryBucket = batch.getBucket(PRIMARY_KEY_PREFIX + cachedItem.getStringKey());
+            primaryBucket.deleteAsync();
+        }
+
         // Remove long key reference if exists
         if (cachedItem.getLongKey() != null) {
             RBucketAsync<Object> longKeyBucket = batch.getBucket(LONG_KEY_PREFIX + cachedItem.getLongKey());
             longKeyBucket.deleteAsync();
         }
-        
-        // Remove parameter references
+
+        // Remove parameter references and clean up empty sets
         Set<String> patterns = generateHierarchicalPatterns(cachedItem.getParameters().stream()
                 .sorted(Comparator.comparingInt(SearchParameter::getLevel))
                 .collect(Collectors.toList()));
-        
+
         for (String pattern : patterns) {
             RSetAsync<Object> paramSet = batch.getSet(PARAM_PREFIX + pattern);
             paramSet.removeAsync(uniqueId);
+
+            // Schedule cleanup of empty parameter sets after batch execution
+            batch.execute(); // Execute current batch first
+
+            // Check if set is empty and delete it
+            RSet<String> paramSetSync = redissonClient.getSet(PARAM_PREFIX + pattern);
+            if (paramSetSync.size() == 0) {
+                paramSetSync.delete();
+            }
+
+            // Create new batch for remaining operations
+            batch = redissonClient.createBatch();
         }
-        
-        batch.execute();
-        
+
+        // Execute final batch if there are remaining operations
+        try {
+            batch.execute();
+        } catch (Exception e) {
+            // Batch might be empty, ignore
+        }
+
         statistics.decrementValues();
         statistics.decrementKeys();
     }
