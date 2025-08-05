@@ -1,3 +1,5 @@
+package ac.h2;
+
 // CacheContext.java - Runtime context for cache operations
 public class CacheContext {
     private static final ThreadLocal<CacheContext> CONTEXT = new ThreadLocal<>();

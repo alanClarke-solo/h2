@@ -1,4 +1,4 @@
-// HierarchicalCacheExample.java
+package ac.h2;// HierarchicalCacheExample.java
 import java.util.*;
 
 public class HierarchicalCacheExample {

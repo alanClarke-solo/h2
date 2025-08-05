@@ -1,4 +1,4 @@
-// TransparentHierarchicalCacheService.java - The main transparent cache adapter
+package ac.h2;// TransparentHierarchicalCacheService.java - The main transparent cache adapter
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.RemovalListener;
@@ -9,9 +9,7 @@ import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
-import java.util.stream.Collectors;
 
 public class TransparentHierarchicalCacheService<T> {
     private static final Logger logger = LoggerFactory.getLogger(TransparentHierarchicalCacheService.class);
