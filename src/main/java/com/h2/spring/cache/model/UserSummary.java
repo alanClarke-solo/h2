@@ -1,5 +1,5 @@
 // UserSummary.java (Supporting class for the example)
-package com.example.cache.model;
+package com.h2.spring.cache.model;
 
 import java.io.Serializable;
 import java.util.List;

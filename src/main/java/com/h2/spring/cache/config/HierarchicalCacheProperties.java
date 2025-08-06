@@ -1,5 +1,5 @@
 // HierarchicalCacheProperties.java
-package com.example.cache.config;
+package com.h2.spring.cache.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.NestedConfigurationProperty;

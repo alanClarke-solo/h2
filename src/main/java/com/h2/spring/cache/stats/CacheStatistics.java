@@ -1,5 +1,5 @@
 // CacheStatistics.java (Enhanced with reset method)
-package com.example.cache.stats;
+package com.h2.spring.cache.stats;
 
 import java.time.LocalDateTime;
 import java.util.concurrent.atomic.AtomicLong;

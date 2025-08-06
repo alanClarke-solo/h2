@@ -1,5 +1,5 @@
 // HierarchicalCacheManager.java (Enhanced to support standard Spring Cache annotations)
-package com.example.cache.service;
+package com.h2.spring.cache.service;
 
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;

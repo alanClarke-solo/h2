@@ -1,5 +1,5 @@
 // HierarchicalCacheable.java (Custom annotation)
-package com.example.cache.annotation;
+package com.h2.spring.cache.annotaion;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;

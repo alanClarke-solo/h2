@@ -1,5 +1,5 @@
 // CacheStatisticsTest.java
-package com.example.cache.stats;
+package com.h2.spring.cache.stats;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;

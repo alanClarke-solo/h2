@@ -1,5 +1,5 @@
 // HierarchicalCacheAspect.java (AOP support)
-package com.example.cache.aspect;
+package com.h2.spring.cache.aspect;
 
 import ac.h2.SearchParameter;
 import com.example.cache.annotation.HierarchicalCacheable;

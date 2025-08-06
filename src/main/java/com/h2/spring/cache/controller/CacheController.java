@@ -1,5 +1,5 @@
 // CacheController.java (Enhanced with statistics reset endpoints)
-package com.example.cache.controller;
+package com.h2.spring.cache.controller;
 
 import com.example.cache.service.HierarchicalCacheManager;
 import com.example.cache.service.HierarchicalCacheService;

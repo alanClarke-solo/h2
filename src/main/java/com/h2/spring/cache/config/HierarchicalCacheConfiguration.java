@@ -1,5 +1,5 @@
 // HierarchicalCacheConfiguration.java
-package com.example.cache.config;
+package com.h2.spring.cache.config;
 
 import com.example.cache.service.HierarchicalCacheManager;
 import com.example.cache.service.HierarchicalCacheService;
@@ -14,8 +14,6 @@ import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
-
-import java.util.concurrent.TimeUnit;
 
 @Configuration
 @EnableCaching

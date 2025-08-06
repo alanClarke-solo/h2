@@ -1,5 +1,5 @@
 // UserRepository.java (Missing repository interface)
-package com.example.cache.repository;
+package com.h2.spring.cache.repository;
 
 import com.example.cache.model.User;
 import org.springframework.data.jpa.repository.JpaRepository;

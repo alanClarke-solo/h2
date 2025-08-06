@@ -1,12 +1,12 @@
 // HierarchicalCacheService.java (Enhanced version)
-package com.example.cache.service;
+package com.h2.spring.cache.service;
 
 import ac.h2.CachedItem;
 import ac.h2.SearchParameter;
-import com.example.cache.config.HierarchicalCacheProperties;
-import com.example.cache.stats.CacheStatistics;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.h2.spring.cache.config.HierarchicalCacheProperties;
+import com.h2.spring.cache.stats.CacheStatistics;
 import jakarta.annotation.PreDestroy;
 import org.redisson.api.*;
 import org.springframework.stereotype.Service;

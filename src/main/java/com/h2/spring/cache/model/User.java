@@ -1,5 +1,5 @@
 // User.java (Missing model class)
-package com.example.cache.model;
+package com.h2.spring.cache.model;
 
 import java.io.Serializable;
 import java.time.LocalDateTime;
