@@ -2,8 +2,8 @@
 package com.h2.spring.cache.aspect;
 
 import ac.h2.SearchParameter;
-import com.example.cache.annotation.HierarchicalCacheable;
-import com.example.cache.service.HierarchicalCacheService;
+import com.h2.spring.cache.annotaion.HierarchicalCacheable;
+import com.h2.spring.cache.service.NearNFarHierarchicalCacheService;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
@@ -23,10 +23,10 @@ import java.util.List;
 @Component
 public class HierarchicalCacheAspect {
 
-    private final HierarchicalCacheService cacheService;
+    private final NearNFarHierarchicalCacheService cacheService;
     private final ExpressionParser parser = new SpelExpressionParser();
 
-    public HierarchicalCacheAspect(HierarchicalCacheService cacheService) {
+    public HierarchicalCacheAspect(NearNFarHierarchicalCacheService cacheService) {
         this.cacheService = cacheService;
     }
 

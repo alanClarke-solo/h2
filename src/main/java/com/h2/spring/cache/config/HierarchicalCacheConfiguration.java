@@ -1,9 +1,9 @@
 // HierarchicalCacheConfiguration.java
 package com.h2.spring.cache.config;
 
-import com.example.cache.service.HierarchicalCacheManager;
-import com.example.cache.service.HierarchicalCacheService;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.h2.spring.cache.service.HierarchicalCacheManager;
+import com.h2.spring.cache.service.NearNFarHierarchicalCacheService;
 import org.redisson.Redisson;
 import org.redisson.api.RedissonClient;
 import org.redisson.config.Config;
@@ -40,15 +40,15 @@ public class HierarchicalCacheConfiguration {
 
     @Bean
     @Primary
-    public HierarchicalCacheService hierarchicalCacheService(
+    public NearNFarHierarchicalCacheService hierarchicalCacheService(
             RedissonClient redissonClient, 
             HierarchicalCacheProperties properties) {
-        return new HierarchicalCacheService(redissonClient, properties);
+        return new NearNFarHierarchicalCacheService(redissonClient, properties);
     }
 
     @Bean
     @Primary
-    public CacheManager cacheManager(HierarchicalCacheService cacheService) {
+    public CacheManager cacheManager(NearNFarHierarchicalCacheService cacheService) {
         return new HierarchicalCacheManager(cacheService);
     }
 }

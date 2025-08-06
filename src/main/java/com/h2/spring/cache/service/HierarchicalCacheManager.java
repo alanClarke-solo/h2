@@ -12,10 +12,10 @@ import java.util.concurrent.ConcurrentMap;
 
 public class HierarchicalCacheManager implements CacheManager {
 
-    private final HierarchicalCacheService cacheService;
+    private final NearNFarHierarchicalCacheService cacheService;
     private final ConcurrentMap<String, Cache> caches = new ConcurrentHashMap<>();
 
-    public HierarchicalCacheManager(HierarchicalCacheService cacheService) {
+    public HierarchicalCacheManager(NearNFarHierarchicalCacheService cacheService) {
         this.cacheService = cacheService;
     }
 

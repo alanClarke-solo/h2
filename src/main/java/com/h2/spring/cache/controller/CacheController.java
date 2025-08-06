@@ -1,9 +1,9 @@
 // CacheController.java (Enhanced with statistics reset endpoints)
 package com.h2.spring.cache.controller;
 
-import com.example.cache.service.HierarchicalCacheManager;
-import com.example.cache.service.HierarchicalCacheService;
-import com.example.cache.stats.CacheStatistics;
+import com.h2.spring.cache.service.HierarchicalCacheManager;
+import com.h2.spring.cache.service.NearNFarHierarchicalCacheService;
+import com.h2.spring.cache.stats.CacheStatistics;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -14,10 +14,10 @@ import java.util.Map;
 @RequestMapping("/api/cache")
 public class CacheController {
 
-    private final HierarchicalCacheService cacheService;
+    private final NearNFarHierarchicalCacheService cacheService;
     private final HierarchicalCacheManager cacheManager;
 
-    public CacheController(HierarchicalCacheService cacheService, HierarchicalCacheManager cacheManager) {
+    public CacheController(NearNFarHierarchicalCacheService cacheService, HierarchicalCacheManager cacheManager) {
         this.cacheService = cacheService;
         this.cacheManager = cacheManager;
     }

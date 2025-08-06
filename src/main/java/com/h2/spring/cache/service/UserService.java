@@ -2,10 +2,10 @@
 package com.h2.spring.cache.service;
 
 import ac.h2.SearchParameter;
-import com.example.cache.annotation.HierarchicalCacheable;
-import com.example.cache.model.User;
-import com.example.cache.model.UserSummary;
-import com.example.cache.repository.UserRepository;
+import com.h2.spring.cache.annotaion.HierarchicalCacheable;
+import com.h2.spring.cache.model.User;
+import com.h2.spring.cache.model.UserSummary;
+import com.h2.spring.cache.repository.UserRepository;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.cache.annotation.Caching;
@@ -17,9 +17,9 @@ import java.util.List;
 public class UserService {
 
     private final UserRepository userRepository;
-    private final HierarchicalCacheService cacheService;
+    private final NearNFarHierarchicalCacheService cacheService;
 
-    public UserService(UserRepository userRepository, HierarchicalCacheService cacheService) {
+    public UserService(UserRepository userRepository, NearNFarHierarchicalCacheService cacheService) {
         this.userRepository = userRepository;
         this.cacheService = cacheService;
     }

@@ -10,14 +10,14 @@ import java.util.concurrent.Callable;
 public class HierarchicalCacheWrapper implements Cache {
 
     private final String name;
-    private final HierarchicalCacheService cacheService;
+    private final NearNFarHierarchicalCacheService cacheService;
     private final String cacheLevel;
 
-    public HierarchicalCacheWrapper(String name, HierarchicalCacheService cacheService) {
+    public HierarchicalCacheWrapper(String name, NearNFarHierarchicalCacheService cacheService) {
         this(name, cacheService, "default");
     }
 
-    public HierarchicalCacheWrapper(String name, HierarchicalCacheService cacheService, String cacheLevel) {
+    public HierarchicalCacheWrapper(String name, NearNFarHierarchicalCacheService cacheService, String cacheLevel) {
         this.name = name;
         this.cacheService = cacheService;
         this.cacheLevel = cacheLevel;

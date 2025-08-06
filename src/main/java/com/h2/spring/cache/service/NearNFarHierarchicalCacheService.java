@@ -19,7 +19,7 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 @Service
-public class HierarchicalCacheService {
+public class NearNFarHierarchicalCacheService {
     private static final String PRIMARY_KEY_PREFIX = "hcache:primary:";
     private static final String LONG_KEY_PREFIX = "hcache:longkey:";
     private static final String PARAM_PREFIX = "hcache:param:";
@@ -30,8 +30,8 @@ public class HierarchicalCacheService {
     private final Map<String, Cache<String, Object>> caffeineCache;
     private final CacheStatistics statistics;
 
-    public HierarchicalCacheService(RedissonClient redissonClient, 
-                                  HierarchicalCacheProperties properties) {
+    public NearNFarHierarchicalCacheService(RedissonClient redissonClient,
+                                            HierarchicalCacheProperties properties) {
         this.redissonClient = redissonClient;
         this.properties = properties;
         this.caffeineCache = new ConcurrentHashMap<>();
