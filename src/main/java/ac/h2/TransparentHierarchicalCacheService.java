@@ -1,424 +1,397 @@
-package ac.h2;// TransparentHierarchicalCacheService.java - The main transparent cache adapter
+package ac.h2;
+
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
-import com.github.benmanes.caffeine.cache.RemovalListener;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.time.Duration;
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 public class TransparentHierarchicalCacheService<T> {
     private static final Logger logger = LoggerFactory.getLogger(TransparentHierarchicalCacheService.class);
-    
+
     // Local caches
     private final Cache<String, CachedItem<T>> localPrimaryCache;
     private final Cache<Long, String> localLongKeyCache;
     private final Cache<String, Set<String>> localParamCache;
-    
+
     // Remote providers
     private final HierarchicalCacheService<T> redisCache;
     private final DatabaseCacheProvider<T> databaseCache;
-    
+
     // Configuration
     private final CacheConfiguration config;
     private final CacheStatistics statistics;
-    
+
     // Internal state
     private final Map<String, Set<String>> parameterPatterns = new ConcurrentHashMap<>();
-    
+
     public TransparentHierarchicalCacheService(
             HierarchicalCacheService<T> redisCache,
             DatabaseCacheProvider<T> databaseCache,
             CacheConfiguration config) {
-        
         this.redisCache = redisCache;
         this.databaseCache = databaseCache;
         this.config = config;
         this.statistics = new CacheStatistics();
-        
-        // Initialize local caches
-        RemovalListener<String, CachedItem<T>> removalListener = (key, value, cause) -> {
-            logger.debug("Local cache eviction - Key: {}, Cause: {}", key, cause);
-            if (value != null && config.isWriteThroughEnabled()) {
-                // Optionally write back to remote cache on eviction
-                writeToRemoteAsync(value);
-            }
-        };
-        
-        this.localPrimaryCache = Caffeine.newBuilder()
-                .maximumSize(config.getMaxLocalCacheSize())
-                .expireAfterWrite(Duration.ofMillis(config.getLocalCacheTtlMillis()))
-                .removalListener(removalListener)
-                .recordStats()
-                .build();
-                
-        this.localLongKeyCache = Caffeine.newBuilder()
-                .maximumSize(config.getMaxLocalCacheSize())
-                .expireAfterWrite(Duration.ofMillis(config.getLocalCacheTtlMillis()))
-                .recordStats()
-                .build();
-                
-        this.localParamCache = Caffeine.newBuilder()
-                .maximumSize(config.getMaxLocalCacheSize() * 10) // More parameter patterns
-                .expireAfterWrite(Duration.ofMillis(config.getLocalCacheTtlMillis()))
-                .recordStats()
-                .build();
+
+        // Initialize local caches if enabled
+        if (config.isLocalCacheEnabled()) {
+            this.localPrimaryCache = Caffeine.newBuilder()
+                    .maximumSize(config.getMaxLocalCacheSize())
+                    .expireAfterWrite(config.getLocalCacheTtlMillis(), TimeUnit.MILLISECONDS)
+                    .build();
+
+            this.localLongKeyCache = Caffeine.newBuilder()
+                    .maximumSize(config.getMaxLocalCacheSize())
+                    .expireAfterWrite(config.getLocalCacheTtlMillis(), TimeUnit.MILLISECONDS)
+                    .build();
+
+            this.localParamCache = Caffeine.newBuilder()
+                    .maximumSize(config.getMaxLocalCacheSize() * 2) // Parameter cache can be larger
+                    .expireAfterWrite(config.getRemoteCacheTtlMillis(), TimeUnit.MILLISECONDS)
+                    .build();
+        } else {
+            this.localPrimaryCache = null;
+            this.localLongKeyCache = null;
+            this.localParamCache = null;
+        }
     }
-    
+
     // ==================== PUT OPERATIONS ====================
-    
+
     public void put(String key, List<SearchParameter> parameters, T value) {
-        put(key, null, parameters, value, config.getRemoteCacheTtlMillis());
+        put(key, null, parameters != null ? parameters : Collections.emptyList(), value, config.getRemoteCacheTtlMillis());
     }
-    
+
     public void put(String key, List<SearchParameter> parameters, T value, long ttlMillis) {
-        put(key, null, parameters, value, ttlMillis);
+        put(key, null, parameters != null ? parameters : Collections.emptyList(), value, ttlMillis);
     }
-    
+
     public void put(String key, Long id, List<SearchParameter> parameters, T value) {
-        put(key, id, parameters, value, config.getRemoteCacheTtlMillis());
+        put(key, id, parameters != null ? parameters : Collections.emptyList(), value, config.getRemoteCacheTtlMillis());
     }
-    
+
     public void put(String key, Long id, List<SearchParameter> parameters, T value, long ttlMillis) {
-        if (key == null || parameters == null || value == null) {
-            throw new IllegalArgumentException("Key, parameters, and value cannot be null");
+        if (key == null) {
+            throw new IllegalArgumentException("Key cannot be null");
         }
-        
-        CacheContext context = CacheContext.get();
-        long effectiveTtl = (context != null && context.getCustomTtl() != null) 
-            ? context.getCustomTtl() : ttlMillis;
-        
-        CachedItem<T> cachedItem = new CachedItem<>(key, id, value, parameters, effectiveTtl);
-        String uniqueId = cachedItem.generateUniqueId();
-        
-        // Store in local cache
-        if (config.isLocalCacheEnabled() && 
-            (context == null || !context.isSkipLocalCache())) {
-            localPrimaryCache.put(uniqueId, cachedItem);
-            
-            // Update local indexes
-            if (id != null) {
-                localLongKeyCache.put(id, uniqueId);
-            }
-            updateLocalParameterIndexes(parameters, uniqueId);
+
+        if (value == null) {
+            throw new IllegalArgumentException("Value cannot be null");
         }
-        
-        // Write through to remote caches
-        if (config.isWriteThroughEnabled()) {
-            writeToRemote(key, id, parameters, value, effectiveTtl);
-        }
-        
+
+        // Normalize parameters
+        List<SearchParameter> normalizedParams = parameters != null ?
+                parameters : Collections.emptyList();
+
+        // Cache locally if enabled
+        cacheLocallyIfEnabled(key, id, normalizedParams, value);
+
+        // Write to remote cache asynchronously if enabled
+        writeToRemote(key, id, normalizedParams, value, ttlMillis);
+
+        // Update statistics
         statistics.incrementValues();
-        statistics.incrementKeys();
     }
-    
+
     // ==================== GET OPERATIONS ====================
-    
+
     public Optional<T> get(String key, Class<T> valueType) {
         if (key == null) return Optional.empty();
-        
+
+//        statistics.incrementRequests();
+
         CacheContext context = CacheContext.get();
+        boolean skipLocalCache = context != null && context.isSkipLocalCache();
         boolean forceRefresh = context != null && context.isForceRefresh();
-        boolean skipLocal = context != null && context.isSkipLocalCache();
-        
-        // Try local cache first (unless force refresh or skip local)
-        if (config.isLocalCacheEnabled() && !forceRefresh && !skipLocal) {
-            CachedItem<T> cachedItem = findInLocalCache(key, null);
+
+        // Check local cache first unless skipped
+        CachedItem<T> cachedItem = null;
+        if (!skipLocalCache && !forceRefresh && config.isLocalCacheEnabled()) {
+            cachedItem = findInLocalCache(key, null);
             if (cachedItem != null && !cachedItem.isExpired()) {
-                statistics.incrementHits();
+                statistics.incrementL1Hits();
                 return Optional.of(cachedItem.getValue());
+            } else {
+                statistics.incrementL1Misses();
             }
         }
-        
-        // Cache miss - try remote sources
-        statistics.incrementMisses();
-        return getFromRemote(key, null, null, valueType);
+
+        // If not in local cache or skipping it, check remote
+        Optional<T> remoteResult = getFromRemote(key, null, Collections.emptyList(), valueType);
+
+        // If found in remote, update local cache
+        if (remoteResult.isPresent() && config.isLocalCacheEnabled() && !skipLocalCache) {
+            cacheLocallyIfEnabled(key, null, Collections.emptyList(), remoteResult.get());
+        }
+
+        return remoteResult;
     }
-    
+
     public Optional<T> get(String key, Long id, Class<T> valueType) {
         if (key == null || id == null) return Optional.empty();
-        
+
+//        statistics.incrementRequests();
+
         CacheContext context = CacheContext.get();
+        boolean skipLocalCache = context != null && context.isSkipLocalCache();
         boolean forceRefresh = context != null && context.isForceRefresh();
-        boolean skipLocal = context != null && context.isSkipLocalCache();
-        
-        // Try local cache first
-        if (config.isLocalCacheEnabled() && !forceRefresh && !skipLocal) {
-            CachedItem<T> cachedItem = findInLocalCache(key, id);
+
+        // Check local cache first unless skipped
+        CachedItem<T> cachedItem = null;
+        if (!skipLocalCache && !forceRefresh && config.isLocalCacheEnabled()) {
+            cachedItem = findInLocalCache(key, id);
             if (cachedItem != null && !cachedItem.isExpired()) {
-                statistics.incrementHits();
+                statistics.incrementL1Hits();
                 return Optional.of(cachedItem.getValue());
+            } else {
+                statistics.incrementL1Misses();
             }
         }
-        
-        statistics.incrementMisses();
-        return getFromRemote(key, id, null, valueType);
+
+        // If not in local cache or skipping it, check remote
+        Optional<T> remoteResult = getFromRemote(key, id, Collections.emptyList(), valueType);
+
+        // If found in remote, update local cache
+        if (remoteResult.isPresent() && config.isLocalCacheEnabled() && !skipLocalCache) {
+            cacheLocallyIfEnabled(key, id, Collections.emptyList(), remoteResult.get());
+        }
+
+        return remoteResult;
     }
-    
+
     public Optional<T> get(Long id, Class<T> valueType) {
         if (id == null) return Optional.empty();
-        
+
+//        statistics.incrementRequests();
+
         CacheContext context = CacheContext.get();
+        boolean skipLocalCache = context != null && context.isSkipLocalCache();
         boolean forceRefresh = context != null && context.isForceRefresh();
-        boolean skipLocal = context != null && context.isSkipLocalCache();
-        
-        // Try local cache first
-        if (config.isLocalCacheEnabled() && !forceRefresh && !skipLocal) {
+
+        // Check local cache first unless skipped
+        if (!skipLocalCache && !forceRefresh && config.isLocalCacheEnabled()) {
             String uniqueId = localLongKeyCache.getIfPresent(id);
             if (uniqueId != null) {
                 CachedItem<T> cachedItem = localPrimaryCache.getIfPresent(uniqueId);
                 if (cachedItem != null && !cachedItem.isExpired()) {
-                    statistics.incrementHits();
+                    statistics.incrementL1Hits();
                     return Optional.of(cachedItem.getValue());
                 }
             }
+            statistics.incrementL1Misses();
         }
-        
-        statistics.incrementMisses();
-        return getFromRemote(null, id, null, valueType);
+
+        // If not in local cache or skipping it, check remote
+        Optional<T> remoteResult = getFromRemote(null, id, Collections.emptyList(), valueType);
+
+        // If found in remote, update local cache
+        if (remoteResult.isPresent() && config.isLocalCacheEnabled() && !skipLocalCache) {
+            // We need to find the key from the remote result
+            // For now, just cache with ID
+            // TODO: Improve to get the key from remote if possible
+            cacheLocallyIfEnabled(null, id, Collections.emptyList(), remoteResult.get());
+        }
+
+        return remoteResult;
     }
-    
+
     public List<T> get(List<SearchParameter> parameters, Class<T> valueType) {
         if (parameters == null || parameters.isEmpty()) {
-            statistics.incrementMisses();
             return Collections.emptyList();
         }
-        
+
+//        statistics.incrementRequests();
+
         CacheContext context = CacheContext.get();
+        boolean skipLocalCache = context != null && context.isSkipLocalCache();
         boolean forceRefresh = context != null && context.isForceRefresh();
-        boolean skipLocal = context != null && context.isSkipLocalCache();
-        
-        // Try local cache first
-        if (config.isLocalCacheEnabled() && !forceRefresh && !skipLocal) {
-            List<T> localResults = searchInLocalCache(parameters);
+
+        // Check local cache first unless skipped
+        List<T> localResults = Collections.emptyList();
+        if (!skipLocalCache && !forceRefresh && config.isLocalCacheEnabled()) {
+            localResults = searchInLocalCache(parameters);
             if (!localResults.isEmpty()) {
-                statistics.incrementHits();
+                statistics.incrementL1Hits();
                 return localResults;
+            } else {
+                statistics.incrementL1Misses();
             }
         }
-        
-        statistics.incrementMisses();
-        return searchInRemote(parameters, valueType);
-    }
-    
-    public List<T> get(String key, List<SearchParameter> parameters, Class<T> valueType) {
-        if (parameters == null || parameters.isEmpty()) {
-            Optional<T> single = get(key, valueType);
-            return single.map(Collections::singletonList).orElse(Collections.emptyList());
+
+        // If not in local cache or skipping it, check remote
+        List<T> remoteResults = searchInRemote(parameters, valueType);
+
+        // If found in remote, update local cache
+        if (!remoteResults.isEmpty() && config.isLocalCacheEnabled() && !skipLocalCache) {
+            cacheSearchResultsLocally(parameters, remoteResults);
         }
-        return get(parameters, valueType);
+
+        return remoteResults;
     }
-    
+
+    public List<T> get(String key, List<SearchParameter> parameters, Class<T> valueType) {
+        if (key == null) {
+            return Collections.emptyList();
+        }
+
+        // Combine the key with parameters for a more specific search
+        List<SearchParameter> combinedParams = new ArrayList<>();
+        if (parameters != null) {
+            combinedParams.addAll(parameters);
+        }
+        combinedParams.add(new SearchParameter("_key", key, 0));
+
+        return get(combinedParams, valueType);
+    }
+
     // ==================== GET OR COMPUTE OPERATIONS ====================
-    
+
     public T getOrCompute(String key, Class<T> valueType, Supplier<T> supplier) {
         Optional<T> cached = get(key, valueType);
         if (cached.isPresent()) {
             return cached.get();
         }
-        
+
         T computed = supplier.get();
         if (computed != null) {
             put(key, Collections.emptyList(), computed);
         }
         return computed;
     }
-    
+
     public T getOrCompute(String key, Long id, Class<T> valueType, Supplier<T> supplier) {
         Optional<T> cached = get(key, id, valueType);
         if (cached.isPresent()) {
             return cached.get();
         }
-        
+
         T computed = supplier.get();
         if (computed != null) {
             put(key, id, Collections.emptyList(), computed);
         }
         return computed;
     }
-    
+
     public T getOrCompute(Long id, Class<T> valueType, Supplier<T> supplier) {
         Optional<T> cached = get(id, valueType);
         if (cached.isPresent()) {
             return cached.get();
         }
-        
+
         T computed = supplier.get();
-        // Cannot cache with only ID - need string key
+        if (computed != null) {
+            // This is tricky since we only have an ID but no key
+            // We'd need a way to determine the key from the computed value
+            // For now, we'll store it with a generated key based on the ID
+            put("id:" + id, id, Collections.emptyList(), computed);
+        }
         return computed;
     }
-    
+
     public List<T> getOrCompute(List<SearchParameter> parameters, Class<T> valueType, Supplier<List<T>> supplier) {
         List<T> cached = get(parameters, valueType);
         if (!cached.isEmpty()) {
             return cached;
         }
-        
+
         List<T> computed = supplier.get();
+        // Can't easily cache these results since we don't have keys
         return computed != null ? computed : Collections.emptyList();
     }
-    
+
     // ==================== LINK OPERATIONS ====================
-    
+
     public void link(String key, Long id) {
         if (key == null || id == null) {
-            throw new IllegalArgumentException("Key and id cannot be null");
+            throw new IllegalArgumentException("Key and ID cannot be null");
         }
-        
-        // Update local cache
-        CachedItem<T> cachedItem = findInLocalCache(key, null);
-        if (cachedItem != null) {
-            CachedItem<T> newCachedItem = new CachedItem<>(key, id, cachedItem.getValue(), 
-                cachedItem.getParameters(), cachedItem.getTtl());
-            String newUniqueId = newCachedItem.generateUniqueId();
-            
-            localPrimaryCache.invalidate(cachedItem.generateUniqueId());
-            localPrimaryCache.put(newUniqueId, newCachedItem);
-            localLongKeyCache.put(id, newUniqueId);
-        }
-        
-        // Update remote caches
-        if (redisCache != null) {
+
+        // Link in remote caches
+        if (config.isRemoteCacheEnabled()) {
             redisCache.link(key, id);
         }
+
+        if (config.isDatabaseCacheEnabled()) {
+            databaseCache.link(key, id);
+        }
+
+        // Update local cache mapping
+        if (config.isLocalCacheEnabled()) {
+            // Find the cached item by key
+            CachedItem<T> cachedItem = findInLocalCache(key, null);
+            if (cachedItem != null) {
+                // Create a new cached item with the ID
+                CachedItem<T> updatedItem = new CachedItem<>(
+                        key, id, cachedItem.getValue(),
+                        cachedItem.getParameters(), cachedItem.getTtl());
+
+                // Update the primary cache
+                String uniqueId = updatedItem.generateUniqueId();
+                localPrimaryCache.put(uniqueId, updatedItem);
+
+                // Update the ID mapping
+                localLongKeyCache.put(id, uniqueId);
+            }
+        }
     }
-    
+
     public void link(String key, List<SearchParameter> parameters) {
         if (key == null || parameters == null || parameters.isEmpty()) {
             throw new IllegalArgumentException("Key and parameters cannot be null or empty");
         }
-        
-        // Update local cache
-        CachedItem<T> cachedItem = findInLocalCache(key, null);
-        if (cachedItem != null) {
-            List<SearchParameter> allParams = new ArrayList<>(cachedItem.getParameters());
-            allParams.addAll(parameters);
-            
-            CachedItem<T> newCachedItem = new CachedItem<>(key, cachedItem.getLongKey(), 
-                cachedItem.getValue(), allParams, cachedItem.getTtl());
-            
-            localPrimaryCache.put(cachedItem.generateUniqueId(), newCachedItem);
-            updateLocalParameterIndexes(parameters, cachedItem.generateUniqueId());
-        }
-        
-        // Update remote caches
-        if (redisCache != null) {
+
+        // Link in remote caches
+        if (config.isRemoteCacheEnabled()) {
             redisCache.link(key, parameters);
         }
+
+        if (config.isDatabaseCacheEnabled()) {
+            databaseCache.link(key, parameters);
+        }
+
+        // Update local cache parameter mapping
+        if (config.isLocalCacheEnabled()) {
+            // Find the cached item by key
+            CachedItem<T> cachedItem = findInLocalCache(key, null);
+            if (cachedItem != null) {
+                // Update parameter indexes
+                updateLocalParameterIndexes(parameters, cachedItem.generateUniqueId());
+            }
+        }
     }
-    
+
     public void link(Long id, List<SearchParameter> parameters) {
         if (id == null || parameters == null || parameters.isEmpty()) {
             throw new IllegalArgumentException("ID and parameters cannot be null or empty");
         }
-        
-        // Update local cache
-        String uniqueId = localLongKeyCache.getIfPresent(id);
-        if (uniqueId != null) {
-            CachedItem<T> cachedItem = localPrimaryCache.getIfPresent(uniqueId);
-            if (cachedItem != null) {
-                List<SearchParameter> allParams = new ArrayList<>(cachedItem.getParameters());
-                allParams.addAll(parameters);
-                
-                CachedItem<T> newCachedItem = new CachedItem<>(cachedItem.getStringKey(), id, 
-                    cachedItem.getValue(), allParams, cachedItem.getTtl());
-                
-                localPrimaryCache.put(uniqueId, newCachedItem);
+
+        // Link in remote caches
+        if (config.isRemoteCacheEnabled()) {
+            redisCache.link(id, parameters);
+        }
+
+        if (config.isDatabaseCacheEnabled()) {
+            databaseCache.link(id, parameters);
+        }
+
+        // Update local cache parameter mapping
+        if (config.isLocalCacheEnabled()) {
+            // Find the cached item by ID
+            String uniqueId = localLongKeyCache.getIfPresent(id);
+            if (uniqueId != null) {
+                // Update parameter indexes
                 updateLocalParameterIndexes(parameters, uniqueId);
             }
         }
-        
-        // Update remote caches
-        if (redisCache != null) {
-            redisCache.link(id, parameters);
-        }
     }
-    
+
     // ==================== INVALIDATION OPERATIONS ====================
-
-    public void invalidate(String key) {
-        if (key == null) return;
-
-        // Find and invalidate local cache first - need to find ALL entries with this key
-        CachedItem<T> cachedItem = findInLocalCache(key, null);
-        String uniqueId = null;
-        Long associatedId = null;
-        List<SearchParameter> parameters = null;
-
-        if (cachedItem != null) {
-            uniqueId = cachedItem.generateUniqueId();
-            associatedId = cachedItem.getLongKey();
-            parameters = cachedItem.getParameters();
-        } else {
-            // If not found in local cache, try to find in all entries by iterating
-            for (Map.Entry<String, CachedItem<T>> entry : localPrimaryCache.asMap().entrySet()) {
-                CachedItem<T> item = entry.getValue();
-                if (key.equals(item.getStringKey())) {
-                    cachedItem = item;
-                    uniqueId = entry.getKey(); // This is the actual key used in the cache
-                    associatedId = item.getLongKey();
-                    parameters = item.getParameters();
-                    break;
-                }
-            }
-        }
-
-        // Remove from all local caches using cascading approach
-        if (cachedItem != null) {
-            invalidateLocalCaches(uniqueId, key, associatedId, parameters);
-        }
-
-        // Invalidate remote caches with cascading - always call this even if not found locally
-        // because the item might exist in remote caches only
-        invalidateRemoteCaches(key, associatedId);
-
-        statistics.decrementValues();
-    }
-
-    public void invalidate(Long id) {
-        if (id == null) return;
-
-        // Find the cached item first to get complete information
-        String uniqueId = localLongKeyCache.getIfPresent(id);
-        CachedItem<T> cachedItem = null;
-        String associatedKey = null;
-        List<SearchParameter> parameters = null;
-
-        if (uniqueId != null) {
-            cachedItem = localPrimaryCache.getIfPresent(uniqueId);
-            if (cachedItem != null) {
-                associatedKey = cachedItem.getStringKey();
-                parameters = cachedItem.getParameters();
-            }
-        }
-
-        // If not found in local cache, try to get information from remote caches
-        if (cachedItem == null && redisCache != null) {
-            try {
-                Optional<T> remoteItem = redisCache.get(id, (Class<T>) Object.class);
-                if (remoteItem.isPresent()) {
-                    // We found it in remote cache, but we need the full cached item
-                    // This is a limitation - we should enhance the remote cache to return metadata
-                    // For now, we'll proceed with what we have
-                }
-            } catch (Exception e) {
-                logger.warn("Error checking remote cache during ID invalidation", e);
-            }
-        }
-
-        // Remove from all local caches using cascading approach
-        // Pass the found information to ensure complete cleanup
-        invalidateLocalCaches(uniqueId, associatedKey, id, parameters);
-
-        // Invalidate remote caches with cascading
-        invalidateRemoteCaches(associatedKey, id);
-
-        statistics.decrementValues();
-    }
 
     public void invalidate(String key, Long id) {
         if (key == null && id == null) return;
@@ -441,102 +414,205 @@ public class TransparentHierarchicalCacheService<T> {
 
         statistics.decrementValues();
     }
-    private void invalidateLocalCaches(String uniqueId, String key, Long id, List<SearchParameter> parameters) {
-        // Remove from primary cache
-        if (uniqueId != null) {
-            localPrimaryCache.invalidate(uniqueId);
-        }
 
-        // Remove direct key mapping
-        if (key != null) {
-            localPrimaryCache.invalidate(key);
-        }
+    public void invalidate(String key) {
+        if (key == null) return;
 
-        // Remove from long key cache
-        if (id != null) {
-            localLongKeyCache.invalidate(id);
-        }
+        try {
+            // First, find the cached item in local cache to get complete information
+            CachedItem<T> cachedItem = localPrimaryCache != null ? localPrimaryCache.getIfPresent(key) : null;
+            Long associatedId = null;
+            List<SearchParameter> parameters = null;
 
-        // Clean up parameter indexes completely
-        if (parameters != null && uniqueId != null) {
-            removeFromParameterIndexes(parameters, uniqueId);
+            if (cachedItem != null) {
+                associatedId = cachedItem.getLongKey();
+                parameters = cachedItem.getParameters();
 
-            // Also remove from parameter cache
-            for (SearchParameter param : parameters) {
-                String paramKey = param.toKey();
-                Set<String> paramSet = localParamCache.getIfPresent(paramKey);
-                if (paramSet != null) {
-                    paramSet.remove(uniqueId);
-                    if (paramSet.isEmpty()) {
-                        localParamCache.invalidate(paramKey);
-                    } else {
-                        localParamCache.put(paramKey, paramSet);
+                // Remove from local caches
+                String uniqueId = cachedItem.generateUniqueId();
+                invalidateLocalCaches(uniqueId, key, associatedId, parameters);
+            } else if (localPrimaryCache != null) {
+                // If not found directly by key, need to search through cached items
+                // Find any entry with matching string key
+                for (Map.Entry<String, CachedItem<T>> entry : localPrimaryCache.asMap().entrySet()) {
+                    CachedItem<T> item = entry.getValue();
+                    if (key.equals(item.getStringKey())) {
+                        associatedId = item.getLongKey();
+                        parameters = item.getParameters();
+                        invalidateLocalCaches(entry.getKey(), key, associatedId, parameters);
+                        break;
+                    }
+                }
+
+                // Also check if there's an ID mapping for this key
+                if (localLongKeyCache != null) {
+                    for (Map.Entry<Long, String> entry : localLongKeyCache.asMap().entrySet()) {
+                        if (entry.getValue().equals(key) || entry.getValue().startsWith(key + ":")) {
+                            associatedId = entry.getKey();
+                            localLongKeyCache.invalidate(associatedId);
+                            break;
+                        }
                     }
                 }
             }
+
+            // Invalidate in remote caches
+            redisCache.invalidate(key);
+            if (associatedId != null) {
+                redisCache.invalidate(associatedId);
+            }
+
+            // Invalidate in database
+            databaseCache.invalidate(key);
+            if (associatedId != null) {
+                databaseCache.invalidate(associatedId);
+            }
+
+            statistics.decrementValues();
+        } catch (Exception e) {
+            logger.warn("Error during invalidation of key: {}", key, e);
+        }
+    }
+
+    public void invalidate(Long id) {
+        if (id == null) return;
+
+        try {
+            // Find the key associated with this ID from local cache
+            String key = null;
+            String uniqueId = null;
+            List<SearchParameter> parameters = null;
+
+            if (localLongKeyCache != null) {
+                uniqueId = localLongKeyCache.getIfPresent(id);
+                if (uniqueId != null) {
+                    CachedItem<T> cachedItem = localPrimaryCache.getIfPresent(uniqueId);
+                    if (cachedItem != null) {
+                        key = cachedItem.getStringKey();
+                        parameters = cachedItem.getParameters();
+                    }
+                }
+            }
+
+            // Invalidate local caches
+            invalidateLocalCaches(uniqueId, key, id, parameters);
+
+            // Invalidate remote caches
+            redisCache.invalidate(id);
+            if (key != null) {
+                redisCache.invalidate(key);
+            }
+
+            // Invalidate database
+            databaseCache.invalidate(id);
+            if (key != null) {
+                databaseCache.invalidate(key);
+            }
+
+            statistics.decrementValues();
+        } catch (Exception e) {
+            logger.warn("Error during invalidation of ID: {}", id, e);
+        }
+    }
+
+    public void invalidateLocalCaches(String uniqueId, String key, Long id, List<SearchParameter> parameters) {
+        if (!config.isLocalCacheEnabled()) return;
+
+        // Invalidate by uniqueId if provided
+        if (uniqueId != null && localPrimaryCache != null) {
+            localPrimaryCache.invalidate(uniqueId);
+        }
+
+        // Invalidate by key if provided
+        if (key != null && localPrimaryCache != null) {
+            localPrimaryCache.invalidate(key);
+        }
+
+        // Invalidate by ID if provided
+        if (id != null && localLongKeyCache != null) {
+            localLongKeyCache.invalidate(id);
+        }
+
+        // Remove from parameter indexes
+        if (parameters != null && !parameters.isEmpty() && localParamCache != null) {
+            removeFromParameterIndexes(parameters, uniqueId != null ? uniqueId : (key != null ? key : id.toString()));
         }
     }
 
     private void invalidateRemoteCaches(String key, Long id) {
-        // Invalidate Redis cache with cascading
-        if (redisCache != null) {
+        // Invalidate in Redis if enabled
+        if (config.isRemoteCacheEnabled()) {
             if (key != null) {
                 redisCache.invalidate(key);
             }
             if (id != null) {
                 redisCache.invalidate(id);
             }
-            // Also try combined invalidation if both are available
             if (key != null && id != null) {
                 redisCache.invalidate(key, id);
             }
         }
 
-        // Invalidate Database cache with cascading
-        if (databaseCache != null) {
+        // Invalidate in database if enabled
+        if (config.isDatabaseCacheEnabled()) {
             if (key != null) {
                 databaseCache.invalidate(key);
             }
             if (id != null) {
                 databaseCache.invalidate(id);
             }
+            if (key != null && id != null) {
+                databaseCache.invalidate(key, id);
+            }
         }
     }
 
     public void invalidateAll() {
         // Clear local caches
-        localPrimaryCache.invalidateAll();
-        localLongKeyCache.invalidateAll();
-        localParamCache.invalidateAll();
-        parameterPatterns.clear();
-        
+        if (config.isLocalCacheEnabled()) {
+            if (localPrimaryCache != null) localPrimaryCache.invalidateAll();
+            if (localLongKeyCache != null) localLongKeyCache.invalidateAll();
+            if (localParamCache != null) localParamCache.invalidateAll();
+        }
+
         // Clear remote caches
-        if (redisCache != null) {
+        if (config.isRemoteCacheEnabled()) {
             redisCache.invalidateAll();
         }
-        if (databaseCache != null) {
+
+        if (config.isDatabaseCacheEnabled()) {
             databaseCache.invalidateAll();
         }
+
+        // Reset statistics
+        statistics.reset();
     }
-    
+
     // ==================== STATISTICS AND MANAGEMENT ====================
-    
+
     public CacheStatistics getStatistics() {
         return statistics;
     }
-    
+
     public void shutdown() {
-        if (redisCache != null) {
+        invalidateAll();
+
+        if (config.isRemoteCacheEnabled() && redisCache != null) {
             redisCache.shutdown();
         }
-        if (databaseCache != null) {
+
+        if (config.isDatabaseCacheEnabled() && databaseCache != null) {
             databaseCache.shutdown();
         }
     }
-    
+
     // ==================== PRIVATE HELPER METHODS ====================
 
     private CachedItem<T> findInLocalCache(String key, Long id) {
+        if (!config.isLocalCacheEnabled() || localPrimaryCache == null) {
+            return null;
+        }
+
         CachedItem<T> cachedItem = null;
 
         // If we have both key and id, try unique ID first
@@ -562,7 +638,7 @@ public class TransparentHierarchicalCacheService<T> {
         }
 
         // If we have just an ID, try ID-based lookup
-        if (cachedItem == null && id != null) {
+        if (cachedItem == null && id != null && localLongKeyCache != null) {
             String uniqueId = localLongKeyCache.getIfPresent(id);
             if (uniqueId != null) {
                 cachedItem = localPrimaryCache.getIfPresent(uniqueId);
@@ -571,86 +647,141 @@ public class TransparentHierarchicalCacheService<T> {
 
         return cachedItem;
     }
+
     private Optional<T> getFromRemote(String key, Long id, List<SearchParameter> parameters, Class<T> valueType) {
+        CacheContext context = CacheContext.get();
         CacheConfiguration.FallbackStrategy strategy = getFallbackStrategy();
-        
+
         switch (strategy) {
-            case REDIS_ONLY:
-                return getFromRedis(key, id, parameters, valueType);
-            case DATABASE_ONLY:
-                return getFromDatabase(key, id, parameters, valueType);
             case REDIS_THEN_DATABASE:
-                Optional<T> redisResult = getFromRedis(key, id, parameters, valueType);
-                if (redisResult.isPresent()) {
-                    cacheLocallyIfEnabled(key, id, parameters, redisResult.get());
-                    return redisResult;
+                // Try Redis first, then database
+                if (config.isRemoteCacheEnabled()) {
+                    Optional<T> redisResult = getFromRedis(key, id, parameters, valueType);
+                    if (redisResult.isPresent()) {
+                        return redisResult;
+                    }
                 }
-                Optional<T> dbResult = getFromDatabase(key, id, parameters, valueType);
-                if (dbResult.isPresent()) {
-                    cacheLocallyIfEnabled(key, id, parameters, dbResult.get());
+
+                // If not in Redis or Redis disabled, try database
+                if (config.isDatabaseCacheEnabled()) {
+                    return getFromDatabase(key, id, parameters, valueType);
                 }
-                return dbResult;
+                break;
+
             case DATABASE_THEN_REDIS:
-                Optional<T> dbFirst = getFromDatabase(key, id, parameters, valueType);
-                if (dbFirst.isPresent()) {
-                    cacheLocallyIfEnabled(key, id, parameters, dbFirst.get());
-                    return dbFirst;
+                // Try database first, then Redis
+                if (config.isDatabaseCacheEnabled()) {
+                    Optional<T> dbResult = getFromDatabase(key, id, parameters, valueType);
+                    if (dbResult.isPresent()) {
+                        return dbResult;
+                    }
                 }
-                Optional<T> redisSecond = getFromRedis(key, id, parameters, valueType);
-                if (redisSecond.isPresent()) {
-                    cacheLocallyIfEnabled(key, id, parameters, redisSecond.get());
+
+                // If not in database or database disabled, try Redis
+                if (config.isRemoteCacheEnabled()) {
+                    return getFromRedis(key, id, parameters, valueType);
                 }
-                return redisSecond;
-            default:
-                return Optional.empty();
+                break;
+
+            case REDIS_ONLY:
+                // Only try Redis
+                if (config.isRemoteCacheEnabled()) {
+                    return getFromRedis(key, id, parameters, valueType);
+                }
+                break;
+
+            case DATABASE_ONLY:
+                // Only try database
+                if (config.isDatabaseCacheEnabled()) {
+                    return getFromDatabase(key, id, parameters, valueType);
+                }
+                break;
         }
+
+        return Optional.empty();
     }
-    
+
     private Optional<T> getFromRedis(String key, Long id, List<SearchParameter> parameters, Class<T> valueType) {
-        if (redisCache == null) return Optional.empty();
-        
         try {
+            Optional<T> result;
+
             if (key != null && id != null) {
-                return redisCache.get(key, id, valueType);
+                result = redisCache.get(key, id, valueType);
             } else if (key != null) {
-                return redisCache.get(key, valueType);
+                result = redisCache.get(key, valueType);
             } else if (id != null) {
-                return redisCache.get(id, valueType);
+                result = redisCache.get(id, valueType);
+            } else {
+                result = Optional.empty();
             }
+
+            if (result.isPresent()) {
+                statistics.incrementL2Hits();
+            } else {
+                statistics.incrementL2Misses();
+            }
+
+            return result;
         } catch (Exception e) {
-            logger.warn("Error accessing Redis cache", e);
+            logger.warn("Error accessing Redis cache: {}", e.getMessage());
+            statistics.incrementL2Errors();
+            return Optional.empty();
         }
-        return Optional.empty();
     }
-    
+
     private Optional<T> getFromDatabase(String key, Long id, List<SearchParameter> parameters, Class<T> valueType) {
-        if (databaseCache == null) return Optional.empty();
-        
         try {
+            Optional<T> result;
+
             if (key != null && id != null) {
-                return databaseCache.get(key, id, valueType);
+                result = databaseCache.get(key, id, valueType);
             } else if (key != null) {
-                return databaseCache.get(key, valueType);
+                result = databaseCache.get(key, valueType);
             } else if (id != null) {
-                return databaseCache.get(id, valueType);
+                result = databaseCache.get(id, valueType);
+            } else {
+                result = Optional.empty();
             }
+
+            if (result.isPresent()) {
+                statistics.incrementL3Hits();
+
+                // Write back to Redis for future cache hits if enabled
+                if (config.isRemoteCacheEnabled() && result.isPresent()) {
+                    if (key != null && id != null) {
+                        redisCache.put(key, id, parameters, result.get());
+                    } else if (key != null) {
+                        redisCache.put(key, parameters, result.get());
+                    }
+                    // Note: can't write back with just an ID
+                }
+            } else {
+                statistics.incrementL3Misses();
+            }
+
+            return result;
         } catch (Exception e) {
-            logger.warn("Error accessing database cache", e);
+            logger.warn("Error accessing database cache: {}", e.getMessage());
+            statistics.incrementL3Errors();
+            return Optional.empty();
         }
-        return Optional.empty();
     }
-    
+
     private List<T> searchInLocalCache(List<SearchParameter> parameters) {
+        if (!config.isLocalCacheEnabled() || localParamCache == null) {
+            return Collections.emptyList();
+        }
+
         Set<String> patterns = generateHierarchicalPatterns(parameters);
         Set<String> uniqueIds = new HashSet<>();
-        
+
         for (String pattern : patterns) {
             Set<String> patternIds = localParamCache.getIfPresent(pattern);
             if (patternIds != null) {
                 uniqueIds.addAll(patternIds);
             }
         }
-        
+
         List<T> results = new ArrayList<>();
         for (String uniqueId : uniqueIds) {
             CachedItem<T> cachedItem = localPrimaryCache.getIfPresent(uniqueId);
@@ -658,195 +789,273 @@ public class TransparentHierarchicalCacheService<T> {
                 results.add(cachedItem.getValue());
             }
         }
-        
+
         return results;
     }
-    
+
     private List<T> searchInRemote(List<SearchParameter> parameters, Class<T> valueType) {
         CacheConfiguration.FallbackStrategy strategy = getFallbackStrategy();
-        
+
         switch (strategy) {
-            case REDIS_ONLY:
-                return searchInRedis(parameters, valueType);
-            case DATABASE_ONLY:
-                return searchInDatabase(parameters, valueType);
             case REDIS_THEN_DATABASE:
-                List<T> redisResults = searchInRedis(parameters, valueType);
-                if (!redisResults.isEmpty()) {
-                    cacheSearchResultsLocally(parameters, redisResults);
-                    return redisResults;
+                // Try Redis first, then database
+                if (config.isRemoteCacheEnabled()) {
+                    List<T> redisResults = searchInRedis(parameters, valueType);
+                    if (!redisResults.isEmpty()) {
+                        return redisResults;
+                    }
                 }
-                List<T> dbResults = searchInDatabase(parameters, valueType);
-                if (!dbResults.isEmpty()) {
-                    cacheSearchResultsLocally(parameters, dbResults);
+
+                // If nothing in Redis or Redis disabled, try database
+                if (config.isDatabaseCacheEnabled()) {
+                    return searchInDatabase(parameters, valueType);
                 }
-                return dbResults;
+                break;
+
             case DATABASE_THEN_REDIS:
-                List<T> dbFirst = searchInDatabase(parameters, valueType);
-                if (!dbFirst.isEmpty()) {
-                    cacheSearchResultsLocally(parameters, dbFirst);
-                    return dbFirst;
+                // Try database first, then Redis
+                if (config.isDatabaseCacheEnabled()) {
+                    List<T> dbResults = searchInDatabase(parameters, valueType);
+                    if (!dbResults.isEmpty()) {
+                        return dbResults;
+                    }
                 }
-                List<T> redisSecond = searchInRedis(parameters, valueType);
-                if (!redisSecond.isEmpty()) {
-                    cacheSearchResultsLocally(parameters, redisSecond);
+
+                // If nothing in database or database disabled, try Redis
+                if (config.isRemoteCacheEnabled()) {
+                    return searchInRedis(parameters, valueType);
                 }
-                return redisSecond;
-            default:
-                return Collections.emptyList();
+                break;
+
+            case REDIS_ONLY:
+                // Only try Redis
+                if (config.isRemoteCacheEnabled()) {
+                    return searchInRedis(parameters, valueType);
+                }
+                break;
+
+            case DATABASE_ONLY:
+                // Only try database
+                if (config.isDatabaseCacheEnabled()) {
+                    return searchInDatabase(parameters, valueType);
+                }
+                break;
         }
+
+        return Collections.emptyList();
     }
-    
+
     private List<T> searchInRedis(List<SearchParameter> parameters, Class<T> valueType) {
-        if (redisCache == null) return Collections.emptyList();
-        
         try {
-            return redisCache.get(parameters, valueType);
+            List<T> results = redisCache.get(parameters, valueType);
+
+            if (!results.isEmpty()) {
+                statistics.incrementL2Hits();
+            } else {
+                statistics.incrementL2Misses();
+            }
+
+            return results;
         } catch (Exception e) {
-            logger.warn("Error searching in Redis cache", e);
+            logger.warn("Error searching Redis cache: {}", e.getMessage());
+            statistics.incrementL2Errors();
             return Collections.emptyList();
         }
     }
-    
+
     private List<T> searchInDatabase(List<SearchParameter> parameters, Class<T> valueType) {
-        if (databaseCache == null) return Collections.emptyList();
-        
         try {
-            return databaseCache.get(parameters, valueType);
+            List<T> results = databaseCache.get(parameters, valueType);
+
+            if (!results.isEmpty()) {
+                statistics.incrementL3Hits();
+
+                // Write back to Redis for future cache hits if enabled
+                if (config.isRemoteCacheEnabled()) {
+                    // This is tricky because we don't have keys for these results
+                    // For now, we skip write-back for parameter searches
+                }
+            } else {
+                statistics.incrementL3Misses();
+            }
+
+            return results;
         } catch (Exception e) {
-            logger.warn("Error searching in database cache", e);
+            logger.warn("Error searching database cache: {}", e.getMessage());
+            statistics.incrementL3Errors();
             return Collections.emptyList();
         }
     }
-    
+
     private void writeToRemote(String key, Long id, List<SearchParameter> parameters, T value, long ttlMillis) {
-        CacheConfiguration.FallbackStrategy strategy = getFallbackStrategy();
-        
-        try {
-            switch (strategy) {
-                case REDIS_ONLY:
-                case REDIS_THEN_DATABASE:
-                    if (redisCache != null) {
-                        if (id != null) {
-                            redisCache.put(key, id, parameters, value, ttlMillis);
-                        } else {
-                            redisCache.put(key, parameters, value, ttlMillis);
-                        }
-                    }
-                    break;
-                case DATABASE_ONLY:
-                case DATABASE_THEN_REDIS:
-                    if (databaseCache != null) {
-                        databaseCache.put(key, id, parameters, value, ttlMillis, (Class<T>) value.getClass());
-                    }
-                    break;
-            }
-        } catch (Exception e) {
-            logger.warn("Error writing to remote cache", e);
-        }
-    }
-    
-    private void writeToRemoteAsync(CachedItem<T> cachedItem) {
-        CompletableFuture.runAsync(() -> {
+        // Write to Redis if enabled
+        if (config.isRemoteCacheEnabled()) {
             try {
-                writeToRemote(cachedItem.getStringKey(), cachedItem.getLongKey(), 
-                    cachedItem.getParameters(), cachedItem.getValue(), cachedItem.getTtl());
-            } catch (Exception e) {
-                logger.warn("Error in async write to remote cache", e);
-            }
-        });
-    }
-    
-    private void cacheLocallyIfEnabled(String key, Long id, List<SearchParameter> parameters, T value) {
-        if (config.isLocalCacheEnabled()) {
-            CachedItem<T> cachedItem = new CachedItem<>(key, id, value, 
-                parameters != null ? parameters : Collections.emptyList(), 
-                config.getLocalCacheTtlMillis());
-            
-            String uniqueId = cachedItem.generateUniqueId();
-            localPrimaryCache.put(uniqueId, cachedItem);
-            
-            if (id != null) {
-                localLongKeyCache.put(id, uniqueId);
-            }
-            
-            if (parameters != null && !parameters.isEmpty()) {
-                updateLocalParameterIndexes(parameters, uniqueId);
-            }
-        }
-    }
-    
-    private void cacheSearchResultsLocally(List<SearchParameter> parameters, List<T> results) {
-        // This is a simplified approach - in a real implementation, you'd need to store
-        // the individual items with their keys and parameters
-        logger.debug("Caching {} search results locally", results.size());
-    }
-    
-    private void updateLocalParameterIndexes(List<SearchParameter> parameters, String uniqueId) {
-        Set<String> patterns = generateHierarchicalPatterns(parameters);
-        
-        for (String pattern : patterns) {
-            localParamCache.asMap().compute(pattern, (k, v) -> {
-                if (v == null) {
-                    v = ConcurrentHashMap.newKeySet();
+                if (id != null) {
+                    redisCache.put(key, id, parameters, value, ttlMillis);
+                } else {
+                    redisCache.put(key, parameters, value, ttlMillis);
                 }
-                v.add(uniqueId);
-                return v;
-            });
+                statistics.incrementL2Puts();
+            } catch (Exception e) {
+                logger.warn("Error writing to Redis cache: {}", e.getMessage());
+                statistics.incrementL2Errors();
+            }
         }
+
+        // Write to database if enabled
+        if (config.isDatabaseCacheEnabled()) {
+            try {
+                if (id != null) {
+                    databaseCache.put(key, id, parameters, value, ttlMillis);
+                } else {
+                    databaseCache.put(key, parameters, value, ttlMillis);
+                }
+                statistics.incrementL3Puts();
+            } catch (Exception e) {
+                logger.warn("Error writing to database cache: {}", e.getMessage());
+                statistics.incrementL3Errors();
+            }
+        }
+    }
+
+    private void writeToRemoteAsync(CachedItem<T> cachedItem) {
+        // Could use CompletableFuture.runAsync() here for truly async behavior
+        writeToRemote(
+                cachedItem.getStringKey(),
+                cachedItem.getLongKey(),
+                cachedItem.getParameters(),
+                cachedItem.getValue(),
+                cachedItem.getTtl()
+        );
+    }
+
+    private void cacheLocallyIfEnabled(String key, Long id, List<SearchParameter> parameters, T value) {
+        if (!config.isLocalCacheEnabled() || localPrimaryCache == null) {
+            return;
+        }
+
+        // Create cached item
+        CachedItem<T> cachedItem = new CachedItem<>(key, id, value, parameters, config.getLocalCacheTtlMillis());
+        String uniqueId = cachedItem.generateUniqueId();
+
+        // Store in primary cache
+        localPrimaryCache.put(uniqueId, cachedItem);
+        statistics.incrementL1Puts();
+
+        // If we have a key but no ID, also store it by key for direct lookups
+        if (key != null && id == null) {
+            localPrimaryCache.put(key, cachedItem);
+        }
+
+        // If we have an ID, store the mapping
+        if (id != null && localLongKeyCache != null) {
+            localLongKeyCache.put(id, uniqueId);
+        }
+
+        // Update parameter indexes
+        updateLocalParameterIndexes(parameters, uniqueId);
+    }
+
+    private void cacheSearchResultsLocally(List<SearchParameter> parameters, List<T> results) {
+        // For search results, we don't have keys/IDs, so we can't easily cache them
+        // We could cache them with generated keys based on hash of parameters + value
+        // but that's not implemented yet
+    }
+
+    private void updateLocalParameterIndexes(List<SearchParameter> parameters, String uniqueId) {
+        if (parameters == null || parameters.isEmpty() || localParamCache == null) {
+            return;
+        }
+
+        Set<String> patterns = generateHierarchicalPatterns(parameters);
+
+        for (String pattern : patterns) {
+            Set<String> ids = localParamCache.getIfPresent(pattern);
+            if (ids == null) {
+                ids = new HashSet<>();
+            } else {
+                // Make a copy since the cached set might be immutable
+                ids = new HashSet<>(ids);
+            }
+            ids.add(uniqueId);
+            localParamCache.put(pattern, ids);
+        }
+
+        // Store pattern mapping for cleanup
+        parameterPatterns.computeIfAbsent(uniqueId, k -> new HashSet<>()).addAll(patterns);
     }
 
     private void removeFromParameterIndexes(List<SearchParameter> parameters, String uniqueId) {
-        if (parameters == null || uniqueId == null) return;
+        if (parameters == null || parameters.isEmpty() || localParamCache == null) {
+            return;
+        }
 
-        // Remove from internal parameter patterns map
-        for (SearchParameter param : parameters) {
-            String paramKey = param.toKey();
-            Set<String> patterns = parameterPatterns.get(paramKey);
-            if (patterns != null) {
-                patterns.remove(uniqueId);
-                if (patterns.isEmpty()) {
-                    parameterPatterns.remove(paramKey);
+        // Get patterns associated with this unique ID
+        Set<String> patterns = parameterPatterns.get(uniqueId);
+        if (patterns == null) {
+            // If we don't have a record, generate them from parameters
+            patterns = generateHierarchicalPatterns(parameters);
+        }
+
+        // Remove uniqueId from all pattern indexes
+        for (String pattern : patterns) {
+            Set<String> ids = localParamCache.getIfPresent(pattern);
+            if (ids != null) {
+                // Make a copy since the cached set might be immutable
+                Set<String> updatedIds = new HashSet<>(ids);
+                updatedIds.remove(uniqueId);
+
+                if (updatedIds.isEmpty()) {
+                    // If no more IDs, remove the pattern entirely
+                    localParamCache.invalidate(pattern);
+                } else {
+                    // Otherwise update with the remaining IDs
+                    localParamCache.put(pattern, updatedIds);
                 }
             }
         }
 
-        // Generate and remove all hierarchical patterns for this item
-        List<SearchParameter> sortedParams = new ArrayList<>(parameters);
-        sortedParams.sort(Comparator.comparingInt(SearchParameter::getLevel));
-
-        Set<String> hierarchicalPatterns = generateHierarchicalPatterns(sortedParams);
-        for (String pattern : hierarchicalPatterns) {
-            Set<String> patternSet = parameterPatterns.get(pattern);
-            if (patternSet != null) {
-                patternSet.remove(uniqueId);
-                if (patternSet.isEmpty()) {
-                    parameterPatterns.remove(pattern);
-                }
-            }
-        }
+        // Remove pattern mapping
+        parameterPatterns.remove(uniqueId);
     }
 
-    private Set<String> generateHierarchicalPatterns(List<SearchParameter> sortedParams) {
+    private Set<String> generateHierarchicalPatterns(List<SearchParameter> parameters) {
+        if (parameters == null || parameters.isEmpty()) {
+            return Collections.emptySet();
+        }
+
+        // Sort parameters by level
+        List<SearchParameter> sortedParams = parameters.stream()
+                .sorted(Comparator.comparingInt(SearchParameter::getLevel))
+                .collect(Collectors.toList());
+
         Set<String> patterns = new HashSet<>();
 
-        // Generate patterns for each level and combination
+        // Generate all possible combinations maintaining hierarchy
         for (int i = 0; i < sortedParams.size(); i++) {
-            StringBuilder pattern = new StringBuilder();
-            for (int j = 0; j <= i; j++) {
-                if (j > 0) pattern.append(":");
-                pattern.append(sortedParams.get(j).toKey());
+            for (int j = i; j < sortedParams.size(); j++) {
+                List<SearchParameter> subList = sortedParams.subList(i, j + 1);
+                String pattern = subList.stream()
+                        .map(SearchParameter::toKey)
+                        .collect(Collectors.joining(">"));
+                patterns.add(pattern);
             }
-            patterns.add(pattern.toString());
+        }
+
+        // Add individual parameter patterns
+        for (SearchParameter param : sortedParams) {
+            patterns.add(param.toKey());
         }
 
         return patterns;
     }
-    
+
     private CacheConfiguration.FallbackStrategy getFallbackStrategy() {
         CacheContext context = CacheContext.get();
-        return (context != null && context.getFallbackStrategy() != null) 
-            ? context.getFallbackStrategy() 
-            : config.getGlobalFallbackStrategy();
+        if (context != null && context.getFallbackStrategy() != null) {
+            return context.getFallbackStrategy();
+        }
+        return config.getGlobalFallbackStrategy();
     }
 }
