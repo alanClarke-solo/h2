@@ -1,3 +1,30 @@
+
+spring.datasource.hikari.schema=your_schema_name
+
+@Configuration
+public class JdbcConfiguration extends AbstractJdbcConfiguration {
+    
+    @Override
+    public NamingStrategy namingStrategy() {
+        return new NamingStrategy() {
+            @Override
+            public String getTableName(Class<?> type) {
+                return "\"schema\".\"" + super.getTableName(type).toLowerCase() + "\"";
+            }
+        };
+    }
+}
+
+
+
+
+
+
+
+
+
+
+======================================================================================
 @Configuration
 @EnableJdbcRepositories
 public class JdbcOracleConfiguration extends AbstractJdbcConfiguration {
