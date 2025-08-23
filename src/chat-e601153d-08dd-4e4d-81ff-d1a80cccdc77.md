@@ -7600,8 +7600,7 @@ This complete implementation includes:
 6. **Hierarchical pattern generation**
 7. **Comprehensive error handling**
 8. **Thread-safe Kryo usage**
-
-The implementation now matches the functionality of `HierarchicalCacheService` and can be used as an L3 cache layer in `TransparentHierarchicalCacheService`.
+![img.png](img.png)cheService` and can be used as an L3 cache layer in `TransparentHierarchicalCacheService`.
 
 kotlin.Unit
 
