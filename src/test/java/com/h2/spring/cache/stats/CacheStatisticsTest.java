@@ -1,6 +1,7 @@
 // CacheStatisticsTest.java
 package com.h2.spring.cache.stats;
 
+import ac.h2.CacheStatistics;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -39,9 +40,9 @@ class CacheStatisticsTest {
         assertThat(statistics.getL1Hits()).isEqualTo(0);
         assertThat(statistics.getL2Hits()).isEqualTo(0);
         assertThat(statistics.getLastResetAt()).isAfterOrEqualTo(beforeReset);
-        
-        // Creation time should remain unchanged
-        assertThat(statistics.getCreatedAt()).isBefore(statistics.getLastResetAt());
+
+        // Creation time should remain unchanged (or be equal if executed very quickly)
+        assertThat(statistics.getCreatedAt()).isBeforeOrEqualTo(statistics.getLastResetAt());
     }
 
     @Test

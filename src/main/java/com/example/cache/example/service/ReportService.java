@@ -1,9 +1,9 @@
 package com.example.cache.example.service;
 
+import ac.h2.CacheStatistics;
 import com.example.cache.example.model.Report;
 import com.example.cache.model.SearchParameter;
 import com.example.cache.service.TransparentHierarchicalCacheService;
-import com.h2.spring.cache.stats.CacheStatistics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.cache.annotation.Cacheable;

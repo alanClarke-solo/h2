@@ -1,11 +1,11 @@
 
 package com.example.cache.service;
 
+import ac.h2.CacheStatistics;
 import ac.h2.HierarchicalCacheService;
 import com.example.cache.model.CacheConfiguration;
 import com.example.cache.model.CachedItem;
 import com.example.cache.model.SearchParameter;
-import com.example.cache.stats.CacheStatistics;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.RemovalListener;

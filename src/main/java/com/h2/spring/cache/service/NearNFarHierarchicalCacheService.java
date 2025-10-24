@@ -2,11 +2,11 @@
 package com.h2.spring.cache.service;
 
 import ac.h2.CachedItem;
+import ac.h2.CacheStatistics;
 import ac.h2.SearchParameter;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.h2.spring.cache.config.HierarchicalCacheProperties;
-import com.h2.spring.cache.stats.CacheStatistics;
 import jakarta.annotation.PreDestroy;
 import org.redisson.api.*;
 import org.springframework.stereotype.Service;

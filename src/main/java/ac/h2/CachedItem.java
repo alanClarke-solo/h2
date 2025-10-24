@@ -53,4 +53,13 @@ public class CachedItem<T> implements Serializable {
     public String generateUniqueId() {
         return stringKey + (longKey != null ? ":" + longKey : "");
     }
+
+    // Alias method for backward compatibility
+    public String getPrimaryKey() {
+        return stringKey;
+    }
+
+    public long getTtlMillis() {
+        return ttl;
+    }
 }
