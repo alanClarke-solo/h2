@@ -1,4 +1,3 @@
-// HierarchicalCacheService.java (Enhanced version)
 package com.h2.spring.cache.service;
 
 import ac.h2.CachedItem;

@@ -1,4 +1,3 @@
-// HierarchicalCacheWrapper.java (Enhanced to support standard Spring Cache annotations)
 package com.h2.spring.cache.service;
 
 import org.springframework.cache.Cache;

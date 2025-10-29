@@ -1,4 +1,3 @@
-// HierarchicalCacheable.java (Custom annotation)
 package com.h2.spring.cache.annotaion;
 
 import java.lang.annotation.ElementType;

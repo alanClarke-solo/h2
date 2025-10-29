@@ -1,4 +1,3 @@
-// UserSummary.java (Supporting class for the example)
 package com.h2.spring.cache.model;
 
 import java.io.Serializable;

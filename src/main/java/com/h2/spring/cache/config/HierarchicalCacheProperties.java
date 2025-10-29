@@ -1,4 +1,3 @@
-// HierarchicalCacheProperties.java
 package com.h2.spring.cache.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;

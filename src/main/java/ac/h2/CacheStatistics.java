@@ -4,7 +4,7 @@ import java.time.LocalDateTime;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Comprehensive cache statistics for multi-tier hierarchical cache.
+ * Cache statistics for multi-tier hierarchical cache.
  * Tracks statistics for L1 (Local/Caffeine), L2 (Redis), and L3 (Database) cache levels.
  * Thread-safe implementation using atomic operations.
  */

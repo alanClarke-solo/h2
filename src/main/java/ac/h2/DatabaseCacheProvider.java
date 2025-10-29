@@ -1,4 +1,3 @@
-// Complete DatabaseCacheProvider.java
 package ac.h2;
 
 import com.esotericsoftware.kryo.Kryo;

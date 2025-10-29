@@ -1,4 +1,3 @@
-// HierarchicalCacheAspect.java (AOP support)
 package com.h2.spring.cache.aspect;
 
 import ac.h2.SearchParameter;

@@ -1,4 +1,3 @@
-// User.java (Missing model class)
 package com.h2.spring.cache.model;
 
 import java.io.Serializable;

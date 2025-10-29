@@ -1,4 +1,3 @@
-// UserRepository.java (Missing repository interface)
 package com.h2.spring.cache.repository;
 
 import com.h2.spring.cache.model.User;

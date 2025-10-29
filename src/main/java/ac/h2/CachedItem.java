@@ -4,7 +4,6 @@ import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 
-// CachedItem.java
 public class CachedItem<T> implements Serializable {
     private final String stringKey;
     private final Long longKey;

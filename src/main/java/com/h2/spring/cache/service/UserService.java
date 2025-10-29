@@ -1,4 +1,3 @@
-// UserService.java (Enhanced with both standard and hierarchical caching)
 package com.h2.spring.cache.service;
 
 import ac.h2.SearchParameter;

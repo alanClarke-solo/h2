@@ -1,6 +1,5 @@
 package ac.h2;
 
-// CacheConfiguration.java - Configuration class for cache settings
 public class CacheConfiguration {
     public enum FallbackStrategy {
         REDIS_ONLY,

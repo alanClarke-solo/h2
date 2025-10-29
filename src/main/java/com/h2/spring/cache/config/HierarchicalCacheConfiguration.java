@@ -1,4 +1,3 @@
-// HierarchicalCacheConfiguration.java
 package com.h2.spring.cache.config;
 
 import com.github.benmanes.caffeine.cache.Caffeine;
