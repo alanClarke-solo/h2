@@ -1,5 +1,3 @@
-Here’s a clear, high-level explanation of the logic and how the classes in ac.h2 work together.
-
 Overview: a 3-level hierarchical cache
 - L1: Local in-memory cache (fastest, process-local).
 - L2: Redis (remote, shared across instances).
@@ -46,10 +44,10 @@ Database tier (L3): storage, lookup, and parameter indexing
     - A separate index table maps parameter patterns to unique_string_id to enable fast reverse lookups by hierarchical parameters.
     - Serialization
         - Values stored as binary (BLOB), typically using Kryo with a per-thread serializer (ThreadLocal) for speed.
-        - Parameters serialized (e.g., JSON) and also expanded into normalized pattern strings for indexing.
+        - Parameters are serialized (e.g., JSON) and also expanded into normalized pattern strings for indexing.
     - Put
         - Upserts into the cache table (MERGE).
-        - Computes expires_at from TTL.
+        - Compute expires_at from TTL.
         - Regenerates parameter pattern rows to reflect current parameters.
     - Get
         - By unique_string_id (derived from stringKey + optional longKey).
@@ -90,7 +88,7 @@ Coordinator service: L1+L2(+L3) orchestration
             - For REDIS_ONLY or DATABASE_ONLY: consult only that tier.
         - All successes backfill L1 if local caching is enabled.
     - Get by parameters
-        - First tries local parameter index: convert the input parameters into hierarchical patterns, then gather matching unique IDs and return values from L1.
+        - First tries local parameter index: convert the input parameters into hierarchical patterns, then gather matching unique IDs, and return values from L1.
         - If not all are in L1 and read-through is enabled, queries remote tiers for parameter-based results and then caches locally.
     - Get-or-compute
         - If not found in the chosen tiers, calls the supplied Supplier to compute the value(s), then writes through to configured tiers and fills L1.
@@ -120,13 +118,13 @@ Typical request flows
 - Put(key, id, params, value)
     1) Store in L1 with TTL.
     2) Update local indexes (longKey mapping, param patterns).
-    3) If write-through enabled:
+    3) If write-through is enabled:
         - Write to Redis and/or DB with their own TTL.
         - Update parameter index table in DB for param queries.
 
 - Get(key, id)
     1) Check L1 by unique ID (L1 hit).
-    2) If miss and read-through enabled:
+    2) If miss and read-through is enabled:
         - Try L2 or L3 according to FallbackStrategy.
         - On hit, backfill L1 and update stats.
     3) Return Optional<T>.
@@ -154,9 +152,3 @@ Thread safety and performance notes
 - Stats use AtomicLong to avoid locks.
 - DB serialization uses a thread-local serializer to reduce allocation and contention.
 - Parameter indexing ensures parameter-based queries scale efficiently.
-
-In short, ac.h2 provides a robust, transparent multi-level cache with:
-- Multiple addressing modes (string, long, parameters).
-- Hierarchical parameter matching and indexing.
-- Configurable read/write-through and fallback.
-- Comprehensive statistics for each cache layer.

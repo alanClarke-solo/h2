@@ -30,6 +30,7 @@
         <redisson.version>3.50.0</redisson.version>
         <embedded-redis.version>0.7.3</embedded-redis.version>
         <testcontainers.version>1.19.3</testcontainers.version>
+        <kafka.clients.version>3.6.1</kafka.clients.version>
     </properties>
 
     <dependencyManagement>
@@ -158,6 +159,13 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-logging</artifactId>
+        </dependency>
+
+        <!-- Messaging: Kafka Clients -->
+        <dependency>
+            <groupId>org.apache.kafka</groupId>
+            <artifactId>kafka-clients</artifactId>
+            <version>${kafka.clients.version}</version>
         </dependency>
 
         <!-- Test Dependencies -->
